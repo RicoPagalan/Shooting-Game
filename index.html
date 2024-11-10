@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FPS Shooter Game</title>
+    <style>
+        /* Basic styling for the game area */
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+
+        #gameCanvas {
+            display: block;
+            background-color: #333;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Crosshair styling */
+        .crosshair {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 20px;
+            height: 20px;
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Score display */
+        #score {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 24px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="score">Score: 0</div>
+    <canvas id="gameCanvas"></canvas>
+    <div class="crosshair"></div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        let score = 0;
+        let bullets = [];
+        let enemies = [];
+        let boss = null;
+        let bossDefeated = false;
+        let gameOver = false;
+        let bossOriginalSize = 80; // Original size for boss "breathing" animation
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Player position (center of screen)
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+        };
+
+        // Bullet properties
+        const bulletSpeed = 10;
+        const bulletRadius = 5;
+
+        // Enemy properties
+        const enemySize = 30;
+        const enemySpeed = 2;
+
+        // Boss properties
+        const bossMaxHealth = 20; // Max health of the boss
+        let bossHealth = bossMaxHealth; // Current health of the boss
+
+        // Shooting bullets
+        window.addEventListener('click', (event) => {
+            if (gameOver) return;
+            const angle = Math.atan2(event.clientY - player.y, event.clientX - player.x);
+            bullets.push({
+                x: player.x,
+                y: player.y,
+                dx: Math.cos(angle) * bulletSpeed,
+                dy: Math.sin(angle) * bulletSpeed,
+            });
+        });
+
+        // Spawn a regular enemy at a random position outside the screen
+        function spawnEnemy() {
+            if (boss || gameOver) return;
+
+            const side = Math.floor(Math.random() * 4);
+            let x, y;
+
+            if (side === 0) { x = Math.random() * canvas.width; y = 0; }               // Top
+            else if (side === 1) { x = Math.random() * canvas.width; y = canvas.height; } // Bottom
+            else if (side === 2) { x = 0; y = Math.random() * canvas.height; }         // Left
+            else { x = canvas.width; y = Math.random() * canvas.height; }             // Right
+
+            const angle = Math.atan2(player.y - y, player.x - x);
+            enemies.push({
+                x,
+                y,
+                dx: Math.cos(angle) * enemySpeed,
+                dy: Math.sin(angle) * enemySpeed,
+            });
+        }
+
+        // Spawn the boss when the score reaches a certain threshold
+        function spawnBoss() {
+            boss = {
+                x: Math.random() * canvas.width,
+                y: 0,
+                dx: (player.x - canvas.width / 2) * 0.2, // Adjust horizontal movement
+                dy: 1,
+                health: bossMaxHealth,
+                size: bossOriginalSize,
+                color: 'purple',
+                pulseFactor: 0,
+            };
+        }
+
+        // Update bullets, enemies, and boss, and check for collisions
+        function update() {
+            if (gameOver) return;
+
+            // Move bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.x += bullet.dx;
+                bullet.y += bullet.dy;
+
+                // Remove bullet if it goes off screen
+                if (bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) {
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // Move enemies toward player
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                enemy.x += enemy.dx;
+                enemy.y += enemy.dy;
+
+                // Check if an enemy hits the player (game over if hit)
+                if (Math.hypot(player.x - enemy.x, player.y - enemy.y) < enemySize / 2) {
+                    endGame("Game Over! You were defeated by an enemy.");
+                    return;
+                }
+
+                // Check if a bullet hits an enemy
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    const bullet = bullets[j];
+                    if (Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y) < enemySize / 2) {
+                        bullets.splice(j, 1);
+                        enemies.splice(i, 1);
+                        score += 10;
+                        updateScore();
+                        break;
+                    }
+                }
+            }
+
+            // Move and check collisions for the boss
+            if (boss) {
+                boss.x += boss.dx + (Math.random() * 2 - 1); // Slight random horizontal movement
+                boss.y += boss.dy;
+                boss.size = bossOriginalSize + 10 * Math.sin(boss.pulseFactor); // Pulsing effect
+                boss.pulseFactor += 0.1;
+
+                // Check if the boss reaches the player (game over)
+                if (Math.hypot(player.x - boss.x, player.y - boss.y) < boss.size / 2) {
+                    endGame("Game Over! The boss defeated you.");
+                    return;
+                }
+
+                // Check if a bullet hits the boss
+                for (let i = bullets.length - 1; i >= 0; i--) {
+                    const bullet = bullets[i];
+                    if (Math.hypot(bullet.x - boss.x, bullet.y - boss.y) < boss.size / 2) {
+                        bullets.splice(i, 1);
+                        boss.health -= 1;
+                        boss.color = 'darkred'; // Flash red on hit
+                        setTimeout(() => boss.color = 'purple', 100); // Reset color after flash
+
+                        // Check if the boss is defeated
+                        if (boss.health <= 0) {
+                            boss = null;
+                            endGame("Congratulations! You defeated the boss and won!");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw player, bullets, enemies, boss, and boss health bar
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw bullets
+            ctx.fillStyle = 'yellow';
+            bullets.forEach(bullet => {
+                ctx.beginPath();
+                ctx.arc(bullet.x, bullet.y, bulletRadius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw enemies
+            ctx.fillStyle = 'red';
+            enemies.forEach(enemy => {
+                ctx.beginPath();
+                ctx.arc(enemy.x, enemy.y, enemySize / 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw boss with dynamic size and color
+            if (boss) {
+                ctx.fillStyle = boss.color;
+                ctx.beginPath();
+                ctx.arc(boss.x, boss.y, boss.size / 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Draw boss health bar
+                ctx.fillStyle = 'black';
+                ctx.fillRect(boss.x - 40, boss.y - 60, 80, 10);
+                ctx.fillStyle = 'red';
+                const healthWidth = (boss.health / bossMaxHealth) * 80;
+                ctx.fillRect(boss.x - 40, boss.y - 60, healthWidth, 10);
+            }
+        }
+
+        // Update score display
+        function updateScore() {
+            scoreDisplay.textContent = `Score: ${score}`;
+            if (score >= 100 && !boss) spawnBoss(); // Spawn boss at score 100
+        }
+
+        // End the game with a message
+        function endGame(message) {
+            alert(message);
+            gameOver = true;
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            if (!gameOver) requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game loop and enemy spawning
+        gameLoop();
+        setInterval(spawnEnemy, 2000); // Spawn a new enemy every 2 seconds
+    </script>
+
+</body>
+
+</html>
